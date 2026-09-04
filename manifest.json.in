@@ -1,0 +1,9 @@
+{
+  "type": "preload-native",
+  "name": "Levi Voxel Smooth GI",
+  "author": "Savio Santos Neves",
+  "version": "@MOD_VERSION@",
+  "entry": "liblevi_voxel_smooth_gi.so",
+  "minecraft_versions": [],
+  "description": "Shader-stall cache, 1-block hierarchical DDA reflections and directional flood-fill GI for Vibrant Visuals."
+}

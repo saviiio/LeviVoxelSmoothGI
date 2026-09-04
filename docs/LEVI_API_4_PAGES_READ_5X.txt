@@ -1,0 +1,152 @@
+LeviLauncher / LeviLaunchroid API — anotações de 5 leituras completas
+Data: 2026-09-03
+Páginas:
+1. https://levilaunchroid.levimc.org/api/types-and-macros
+2. https://levilaunchroid.levimc.org/api/signature
+3. https://levilaunchroid.levimc.org/api/patch
+4. https://levilaunchroid.levimc.org/api/mod
+
+Objetivo: reler cada página inteira cinco vezes, anotar o que é relevante em cada passagem e depois usar um resumo para corrigir LeviVoxelSmoothGI.
+
+==================== LEITURA 1 ====================
+
+[1/5] Types and Macros
+- O SDK público expõe Config, Export, Input, Logger, Mod, ModMenu e as APIs de memória Hook/Patch/Signature.
+- PL_EXPORT só deve ser usado quando outra biblioteca realmente precisa chamar o símbolo exportado; não é necessário para a maioria dos símbolos internos do mod.
+- PL_REGISTER_MOD registra um objeto de ciclo de vida. Deve aparecer uma única vez por biblioteca.
+- A expressão de instância registrada precisa produzir um objeto que continue vivo durante todo o processo.
+- load() é obrigatório; enable(), disable() e unload() são opcionais.
+- A nomenclatura pública segue o estilo Lamina: tipos UpperCamelCase, funções/variáveis lowerCamelCase, membros privados mUpperCamelCase, macros UPPER_SNAKE_CASE.
+
+[1/5] Signature API
+- A API resolve símbolos ou padrões de bytes dentro de um módulo já carregado.
+- resolveSignature(signature, moduleName) retorna uintptr_t e retorna 0 quando não encontra o alvo.
+- resolveSignatures(span, moduleName) resolve vários padrões no mesmo módulo em uma única operação conceitual.
+- Formato de padrão aceita bytes e wildcards por byte/nibble: ?, ??, A?, ?F.
+- A documentação recomenda resolveSignatures() quando há vários padrões do mesmo módulo.
+- A resolução deve ser tratada como falível: endereço 0 nunca pode ser usado como destino de hook/patch.
+
+[1/5] Patch API
+- A API oficial permite readBytes, writeBytes, revertPatch e revertAllPatches.
+- writeBytes salva bytes originais associados a um nome de patch, permitindo reversão posterior.
+- PatchHandle fornece RAII: aplicação no enable e reset no disable é o padrão mais seguro.
+- Reutilizar um nome de patch substitui o registro anterior desse nome.
+- Endereço ou instrução incorreta ainda pode derrubar o processo; a API não torna um patch semanticamente seguro sozinha.
+- Antes de escrever instruções, a implementação deve validar build/alvo/bytes esperados.
+
+[1/5] Mod API
+- A entrada oficial é um objeto C++ de longa duração registrado por PL_REGISTER_MOD e associado a ll::mod::NativeMod::current().
+- load(): configuração, diretórios e estado pertencente ao mod.
+- enable(): hooks, callbacks e UI em runtime.
+- disable(): desfazer trabalho que toca o jogo e desregistrar UI/callbacks.
+- unload(): liberar estado restante depois de disable.
+- Cada fase retorna bool; falhas não devem escapar como exceções pela fronteira do lifecycle.
+- NativeMod oferece getDataDir/getConfigDir/getResourceDir/getLibraryPath e logger escopado ao mod.
+
+==================== LEITURA 2 ====================
+
+[2/5] Types and Macros
+- Os únicos headers que devemos tratar como API pública estável são os listados pela documentação; depender de headers internos aumenta risco de ABI/API.
+- PL_REGISTER_MOD deve ser usado uma vez e o objeto registrado não pode ser temporário.
+- O requisito de vida útil do objeto reforça que GlHooks/VoxelRuntime precisam ser membros persistentes, não variáveis locais de enable().
+- PL_EXPORT não resolve interceptação de GLES; é apenas visibilidade de símbolo do próprio mod.
+
+[2/5] Signature API
+- A API pode procurar tanto um nome de símbolo quanto bytes; isso permite uma estratégia nome primeiro/padrão como fallback quando aplicável.
+- Para vários alvos da mesma libminecraftpe.so, resolveSignatures() é mais apropriado do que repetir scans independentes.
+- Wildcards ajudam a criar assinaturas resistentes a campos relocados sem tornar o padrão genérico demais.
+- O valor retornado é um endereço absoluto no processo e deve ser verificado antes de qualquer operação.
+
+[2/5] Patch API
+- readBytes é útil como verificação de pré-condição antes de writeBytes: conferir instruções esperadas evita escrever numa versão errada.
+- PatchHandle é preferível quando a modificação precisa existir apenas durante enable(); reset encaixa diretamente em disable().
+- Patches devem possuir nomes únicos e estáveis para permitir reversão determinística.
+- A documentação alerta explicitamente que patchar instruções erradas/endereço errado pode causar crash, então Build ID + bytes esperados são parte do desenho correto.
+
+[2/5] Mod API
+- O construtor pode guardar referência a *NativeMod::current(), como no exemplo oficial.
+- getConfigDir e getDataDir devem ser usados em vez de caminhos Android hardcoded.
+- A instalação de hooks é responsabilidade de enable, não de load.
+- disable deve realmente desfazer os hooks/patches que afetam o jogo; unload não deve ser a única chance de cleanup.
+- A instância deve sobreviver a todas as fases do processo.
+
+==================== LEITURA 3 ====================
+
+[3/5] Types and Macros
+- A lista de headers confirma que Signature e Patch são APIs públicas, portanto podemos remover lógica manual de escrita de memória caso exista e usar a API oficial.
+- O registro de lifecycle não requer exportar manualmente funções de entrada.
+- Manter uma única instância registrada reduz problemas de estado duplicado entre hooks e runtime.
+
+[3/5] Signature API
+- A recomendação de resolveSignatures para lotes é importante para startup: evita repetir trabalho desnecessário no mesmo módulo.
+- Uma assinatura deve continuar específica o suficiente para não retornar um falso positivo; a API retorna 0 quando falha, mas não prova que uma ocorrência semanticamente errada é correta.
+- Para versão fixa do Minecraft, Build ID exato + assinatura validada é mais seguro do que aceitar qualquer versão.
+
+[3/5] Patch API
+- readBytes + comparação de bytes permite implementar uma camada de confirmação adicional mesmo depois de o Build ID bater.
+- O mecanismo de reversão por nome e RAII permite rollback se uma instalação intermediária falhar.
+- Para redirecionar call sites internos, um branch ARM64 só deve ser escrito depois de confirmar alcance/instruções e manter o original recuperável.
+- Patch API é apropriada para alterar memória do processo; não é substituto para um hook quando precisamos preservar o fluxo e chamar a implementação original.
+
+[3/5] Mod API
+- A separação load/enable evita tocar o RenderDragon cedo demais.
+- Se libminecraftpe.so ainda não estiver pronta durante enable, um estado armado pode esperar o módulo, mas a instalação efetiva continua pertencendo ao período enabled.
+- disable precisa sinalizar/parar workers antes de desfazer objetos que eles possam acessar.
+- O logger do NativeMod deve ser a origem dos diagnósticos de integração.
+
+==================== LEITURA 4 ====================
+
+[4/5] Types and Macros
+- Não devemos inventar APIs de loader ou headers privados quando Hook/Patch/Signature já são públicos.
+- O objeto registrado precisa ser process-lifetime; referências e callbacks globais devem apontar para esse objeto ou para membros que tenham vida equivalente.
+- PL_EXPORT deve permanecer restrito a interfaces intencionalmente públicas entre bibliotecas.
+
+[4/5] Signature API
+- Um lote de assinaturas no mesmo módulo deve ser resolvido junto quando isso for necessário; isso simplifica tratamento de falha e consistência de versão.
+- Padrões suportam wildcard de nibble, útil para instruções ARM64 se somente parte do byte variar.
+- É correto recusar funcionamento se um alvo necessário resultar em 0 em vez de tentar um endereço aproximado.
+
+[4/5] Patch API
+- Patches nomeados e reversíveis são apropriados para pequenas alterações de call sites/dispatch que precisam desaparecer ao desabilitar o mod.
+- PatchHandle oferece atomicidade de ownership do ponto de vista C++: enquanto o membro existe, o patch pode permanecer aplicado; reset desfaz.
+- O código deve evitar reutilizar o mesmo nome para patches diferentes, porque a documentação diz que isso substitui o registro salvo.
+- Validação deve anteceder a escrita, pois a API não impede um endereço válido porém semanticamente incorreto.
+
+[4/5] Mod API
+- A documentação deixa explícito que enable é o lugar recomendado para hooks; isso deve permanecer verdadeiro mesmo com um bootstrap assíncrono.
+- disable precisa remover hooks e patches de jogo; unload é cleanup final.
+- Exceções devem ser capturadas dentro de cada callback de lifecycle e convertidas para false/log.
+- Diretórios e logger fornecidos pelo NativeMod são as fontes oficiais para dados do mod.
+
+==================== LEITURA 5 ====================
+
+[5/5] Types and Macros
+- Confirmação final: o conjunto de APIs necessário ao nosso caso é público: Mod + Signature + Patch (e Hook já usado pelo projeto).
+- PL_REGISTER_MOD uma vez, com instância persistente, é o desenho correto; não criar uma segunda entrada para tentar capturar o RenderDragon mais cedo.
+- Não há motivo para exportar detours do mod apenas por causa do hook.
+
+[5/5] Signature API
+- Confirmação final: endereço 0 é falha e deve interromper aquela instalação.
+- resolveSignatures é a opção documentada quando diversos padrões pertencem ao mesmo módulo; pode servir como fallback validado, não como scan contínuo em render threads.
+- Nome de símbolo pode ser tentado quando existir, padrão de bytes quando necessário.
+- Build ID + padrões específicos + validação dos bytes é a política mais conservadora.
+
+[5/5] Patch API
+- Confirmação final: readBytes é útil para validar o destino em runtime; writeBytes/PatchHandle só depois da validação.
+- Reversão deve acontecer em disable e também em rollback de uma instalação incompleta.
+- Para patches ARM64, cada instrução e destino precisam ser conhecidos; não usar patch aproximado para tentar “forçar” a GI.
+- O uso correto da Patch API pode complementar hooks quando o motor já cacheou um ponteiro ou quando existe um call site interno conhecido que contorna o PLT.
+
+[5/5] Mod API
+- Confirmação final: load prepara, enable instala/arma integração com o jogo, disable desfaz, unload libera o restante.
+- NativeMod::current() e uma instância estática de longa vida seguem exatamente o modelo documentado.
+- O mod deve permanecer funcionalmente inativo quando disabled, inclusive workers de bootstrap.
+- Todos os erros de lifecycle devem ser contidos e logados.
+
+==================== CONCLUSÕES APÓS 20 LEITURAS ====================
+
+1. O lifecycle atual está conceitualmente correto, mas todo hook/patch de jogo precisa ter ownership claro dentro do estado enabled e cleanup determinístico.
+2. Signature API deve ser usada como resolução oficial e falível. Para múltiplos alvos, preferir lote/fallback fora de threads de renderização; nunca aceitar zero.
+3. Patch API pode complementar os hooks em pontos internos conhecidos, desde que Build ID e bytes sejam validados e haja rollback.
+4. O problema visual da GI não deve ser “corrigido” com intensidade artificial: é necessário provar que o shader certo foi patchado, o SSBO foi vinculado, houve escrita de superfície/fonte, compute executou e o Deferred leu energia não-zero.
+5. As APIs oficiais favorecem uma arquitetura reversível: resolver/validar -> instalar -> marcar ativo; em falha, desfazer tudo.

@@ -1,0 +1,36 @@
+Resumo técnico — LeviLauncher API (5 leituras de 4 páginas)
+
+Fontes lidas cinco vezes cada:
+- /api/types-and-macros
+- /api/signature
+- /api/patch
+- /api/mod
+
+1. Lifecycle
+O desenho correto é uma única instância C++ de longa duração registrada com PL_REGISTER_MOD. load() prepara configuração/diretórios/estado; enable() instala ou arma hooks/patches; disable() desfaz tudo que toca o jogo; unload() libera o restante. Nenhuma exceção deve atravessar essas fronteiras.
+
+2. APIs públicas
+Devemos depender dos headers públicos listados pelo SDK. PL_EXPORT não é necessário para detours internos; só para símbolos intencionalmente chamados por outra biblioteca.
+
+3. Signature API
+resolveSignature/resolveSignatures retornam 0 em falha. Para vários padrões da mesma libminecraftpe.so, resolveSignatures é a forma documentada. O alvo deve ser validado por Build ID e bytes/padrão; nunca usar endereço aproximado ou 0.
+
+4. Patch API
+readBytes deve ser usado como pré-validação quando um patch de memória for necessário. writeBytes/PatchHandle permitem patches nomeados e reversíveis. PatchHandle combina bem com enable/disable. Endereço ou instruções errados continuam perigosos, então todo patch precisa de Build ID exato, bytes esperados e rollback.
+
+5. Aplicação ao LeviVoxelSmoothGI
+O mod já segue boa parte do lifecycle oficial. A correção deve focar a cadeia real da GI, sem aumentar brilho artificialmente:
+- provar interceptação do shader;
+- provar classificação/patch do shader correto;
+- provar link do programa modificado;
+- provar binding do SSBO e uniforms;
+- provar escrita de câmera, ocupação e fonte;
+- provar dispatch compute;
+- provar energia GI não-zero;
+- provar leitura/composição no Deferred.
+
+6. Estratégia de integração
+Manter os HookHandle persistentes e rollback do conjunto incompleto. Usar Signature API apenas fora das render threads. Um patch de call site/dispatch só deve ser usado se houver evidência de que um caminho interno contorna o PLT, sempre com validação e reversão. Não tentar “resolver” falta de GI aumentando giStrength.
+
+7. Principal correção prática indicada
+Adicionar diagnóstico de GPU/SSBO que confirme cada estágio e tornar a captura de câmera/superfície robusta. A câmera não deve depender de um único fragmento na coordenada (0,0); isso pode deixar o compute centrado em coordenadas erradas e fazer todas as fontes capturadas serem tratadas fora da região ativa. A posição da câmera deve ser escrita de forma determinística por um caminho executado no programa Deferred, e o runtime deve expor contadores/flags de escrita e energia para provar que o floodfill realmente recebe dados.
